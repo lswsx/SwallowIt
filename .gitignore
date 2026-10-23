@@ -1,0 +1,18 @@
+# 构建产物
+bin/
+obj/
+dist/
+publish/
+*.user
+*.suo
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# 本地设计与临时文件
+spark-output/
+.screenshot-tmp/
+*.log
+Thumbs.db
