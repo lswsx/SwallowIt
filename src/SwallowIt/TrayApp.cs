@@ -92,6 +92,7 @@ internal sealed class TrayApp : ApplicationContext
         _mainForm.ShowEntryRequested += ShowEntry;
         _mainForm.HideEntryRequested += HideEntry;
         _mainForm.RemoveEntryRequested += RemoveEntry;
+        _mainForm.RemoveGoneRequested += RemoveGone;
         _mainForm.RenameCommitted += OnRenameCommitted;
     }
 
@@ -546,6 +547,34 @@ internal sealed class TrayApp : ApplicationContext
 
         _mainForm.RemoveEntryRow(entry);
         entry.Icon?.Dispose();
+    }
+
+    private void RemoveGone()
+    {
+        var targets = _entries.Where(entry => entry.State == EntryState.Gone).ToList();
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in targets)
+        {
+            _entries.Remove(entry);
+        }
+
+        if (!TrySave("移除已消失记录"))
+        {
+            _entries.AddRange(targets);
+            return;
+        }
+
+        foreach (var entry in targets)
+        {
+            _mainForm.RemoveEntryRow(entry);
+            entry.Icon?.Dispose();
+        }
+
+        ShowBalloon($"已移除 {targets.Count} 条已消失记录。", ToolTipIcon.Info);
     }
 
     private void ShowAll()

@@ -19,13 +19,19 @@ public sealed class MainForm : Form
     private Button _hideButton = null!;
     private Button _removeButton = null!;
     private Button _showAllButton = null!;
+    private Button _removeGoneButton = null!;
     private ToolStripMenuItem _showSelectedMenuItem = null!;
     private ToolStripMenuItem _hideSelectedMenuItem = null!;
     private ToolStripMenuItem _removeMenuItem = null!;
+    private ToolStripMenuItem _removeGoneMenuItem = null!;
     private ToolStripMenuItem _showAllMenuItem = null!;
     private ToolStripMenuItem _hideAllMenuItem = null!;
     private ToolStripMenuItem _autoStartMenuItem = null!;
 
+    private readonly Font _linkFont = new("Microsoft YaHei UI", 9F);
+    private readonly Font _linkHoverFont = new("Microsoft YaHei UI", 9F, FontStyle.Underline);
+
+    private HoverTarget? _hoveredLink;
     private bool _allowClose;
 
     public MainForm(IReadOnlyList<ServiceEntry> entries)
@@ -122,6 +128,8 @@ public sealed class MainForm : Form
 
     public event Action<ServiceEntry>? RemoveEntryRequested;
 
+    public event Action? RemoveGoneRequested;
+
     public event Action<ServiceEntry>? RenameCommitted;
 
     public void PrepareForExit()
@@ -172,6 +180,9 @@ public sealed class MainForm : Form
         {
             return;
         }
+
+        _hoveredLink = null;
+        _grid.Cursor = Cursors.Default;
 
         var wasSelected = row.Selected;
         var removedIndex = row.Index;
@@ -341,10 +352,23 @@ public sealed class MainForm : Form
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
 
+        grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Actions",
+            HeaderText = "操作",
+            Width = 108,
+            ReadOnly = true,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+
         grid.CellValidating += OnCellValidating;
         grid.CellEndEdit += OnCellEndEdit;
         grid.CellDoubleClick += OnCellDoubleClick;
         grid.CellMouseDown += OnCellMouseDown;
+        grid.CellMouseClick += OnCellMouseClick;
+        grid.CellMouseMove += OnCellMouseMove;
+        grid.CellPainting += OnCellPainting;
+        grid.MouseLeave += OnGridMouseLeave;
         grid.SelectionChanged += (_, _) => UpdateActionAvailability();
 
         var contextMenu = new ContextMenuStrip();
@@ -428,6 +452,7 @@ public sealed class MainForm : Form
         _showSelectedMenuItem = new ToolStripMenuItem("显示选中(&R)", null, (_, _) => InvokeShowSelected());
         _hideSelectedMenuItem = new ToolStripMenuItem("收纳选中(&H)", null, (_, _) => InvokeHideSelected());
         _removeMenuItem = new ToolStripMenuItem("从列表移除(&D)", null, (_, _) => InvokeRemoveSelected());
+        _removeGoneMenuItem = new ToolStripMenuItem("移除已消失(&G)", null, (_, _) => RemoveGoneRequested?.Invoke());
         _showAllMenuItem = new ToolStripMenuItem("全部显示(&A)", null, (_, _) => ShowAllRequested?.Invoke());
         _hideAllMenuItem = new ToolStripMenuItem("全部收纳(&L)", null, (_, _) => HideAllRequested?.Invoke());
 
@@ -440,7 +465,8 @@ public sealed class MainForm : Form
             _showAllMenuItem,
             _hideAllMenuItem,
             new ToolStripSeparator(),
-            _removeMenuItem
+            _removeMenuItem,
+            _removeGoneMenuItem
         ]);
         actionsMenu.DropDownOpening += (_, _) => UpdateActionAvailability();
 
@@ -544,6 +570,22 @@ public sealed class MainForm : Form
         _showAllButton.Anchor = AnchorStyles.Right;
         _showAllButton.Click += (_, _) => ShowAllRequested?.Invoke();
 
+        _removeGoneButton = CreateButton("移除已消失");
+        _removeGoneButton.Width = 100;
+        _removeGoneButton.Anchor = AnchorStyles.Right;
+        _removeGoneButton.Click += (_, _) => RemoveGoneRequested?.Invoke();
+
+        var batchFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new Padding(0),
+            Padding = new Padding(0, 7, 0, 7)
+        };
+        batchFlow.Controls.Add(_removeGoneButton);
+        batchFlow.Controls.Add(_showAllButton);
+
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -553,10 +595,10 @@ public sealed class MainForm : Form
             Padding = new Padding(0)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100F));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 208F));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         layout.Controls.Add(flow, 0, 0);
-        layout.Controls.Add(_showAllButton, 1, 0);
+        layout.Controls.Add(batchFlow, 1, 0);
 
         panel.Controls.Add(layout);
         return panel;
@@ -599,14 +641,14 @@ public sealed class MainForm : Form
 
     private void AddEntryRowCore(ServiceEntry entry)
     {
-        var rowIndex = _grid.Rows.Add(
-            entry.Icon ?? SystemIcons.Application.ToBitmap(),
-            entry.Name,
-            entry.StateText,
-            entry.CurrentTitle,
-            entry.ProcessName);
+        var rowIndex = _grid.Rows.Add();
         var row = _grid.Rows[rowIndex];
         row.Tag = entry;
+        row.Cells["Icon"].Value = entry.Icon ?? SystemIcons.Application.ToBitmap();
+        row.Cells["Name"].Value = entry.Name;
+        row.Cells["Status"].Value = entry.StateText;
+        row.Cells["Title"].Value = entry.CurrentTitle;
+        row.Cells["Process"].Value = entry.ProcessName;
         ApplyStatusStyle(row);
     }
 
@@ -647,6 +689,8 @@ public sealed class MainForm : Form
         row.Cells["Title"].Style.ForeColor = entry.State == EntryState.Gone
             ? Color.FromArgb(160, 166, 172)
             : Color.FromArgb(90, 98, 106);
+
+        _grid.InvalidateCell(row.Cells["Actions"]);
     }
 
     private void UpdateSummary()
@@ -683,12 +727,24 @@ public sealed class MainForm : Form
         var entry = GetSelectedEntry();
         var hasSelection = entry is not null;
 
+        var entries = _grid.Rows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.Tag)
+            .OfType<ServiceEntry>()
+            .ToList();
+
+        var hasCollected = entries.Any(item => item.State == EntryState.Collected);
+        var hasShown = entries.Any(item => item.State == EntryState.Shown);
+        var hasGone = entries.Any(item => item.State == EntryState.Gone);
+
         if (_showButton is not null)
         {
             _showButton.Enabled = hasSelection && entry!.State != EntryState.Gone;
             _hideButton.Enabled = hasSelection && entry!.State == EntryState.Shown;
             _removeButton.Enabled = hasSelection;
             _collectButton.Enabled = true;
+            _showAllButton.Enabled = hasCollected;
+            _removeGoneButton.Enabled = hasGone;
         }
 
         if (_showSelectedMenuItem is not null)
@@ -696,20 +752,9 @@ public sealed class MainForm : Form
             _showSelectedMenuItem.Enabled = hasSelection && entry!.State != EntryState.Gone;
             _hideSelectedMenuItem.Enabled = hasSelection && entry!.State == EntryState.Shown;
             _removeMenuItem.Enabled = hasSelection;
-
-            var entries = _grid.Rows
-                .Cast<DataGridViewRow>()
-                .Select(row => row.Tag)
-                .OfType<ServiceEntry>()
-                .ToList();
-
-            _showAllMenuItem.Enabled = entries.Any(item => item.State == EntryState.Collected);
-            _hideAllMenuItem.Enabled = entries.Any(item => item.State == EntryState.Shown);
-
-            if (_showAllButton is not null)
-            {
-                _showAllButton.Enabled = _showAllMenuItem.Enabled;
-            }
+            _showAllMenuItem.Enabled = hasCollected;
+            _hideAllMenuItem.Enabled = hasShown;
+            _removeGoneMenuItem.Enabled = hasGone;
         }
     }
 
@@ -816,7 +861,8 @@ public sealed class MainForm : Form
 
     private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
-        if (e.RowIndex < 0 || _grid.Columns[e.ColumnIndex].Name == "Name")
+        if (e.RowIndex < 0
+            || _grid.Columns[e.ColumnIndex].Name is "Name" or "Actions")
         {
             return;
         }
@@ -843,6 +889,178 @@ public sealed class MainForm : Form
             var columnIndex = e.ColumnIndex >= 0 ? e.ColumnIndex : 0;
             _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[columnIndex];
             _grid.Rows[e.RowIndex].Selected = true;
+        }
+    }
+
+    private void OnCellMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left
+            || e.Clicks > 1
+            || e.RowIndex < 0
+            || e.ColumnIndex < 0
+            || _grid.Columns[e.ColumnIndex].Name != "Actions")
+        {
+            return;
+        }
+
+        if (_grid.Rows[e.RowIndex].Tag is not ServiceEntry entry)
+        {
+            return;
+        }
+
+        var cell = _grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+        foreach (var link in GetActionLinks(entry, new Rectangle(Point.Empty, cell.Size)))
+        {
+            if (!link.Enabled || !link.Bounds.Contains(e.Location))
+            {
+                continue;
+            }
+
+            if (link.Kind == ActionKind.Remove)
+            {
+                RemoveEntryRequested?.Invoke(entry);
+            }
+            else if (entry.State == EntryState.Collected)
+            {
+                ShowEntryRequested?.Invoke(entry);
+            }
+            else if (entry.State == EntryState.Shown)
+            {
+                HideEntryRequested?.Invoke(entry);
+            }
+
+            return;
+        }
+    }
+
+    private void OnCellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
+    {
+        HoverTarget? target = null;
+
+        if (e.RowIndex >= 0
+            && e.ColumnIndex >= 0
+            && _grid.Columns[e.ColumnIndex].Name == "Actions"
+            && _grid.Rows[e.RowIndex].Tag is ServiceEntry entry)
+        {
+            var cell = _grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            foreach (var link in GetActionLinks(entry, new Rectangle(Point.Empty, cell.Size)))
+            {
+                if (link.Enabled && link.Bounds.Contains(e.Location))
+                {
+                    target = new HoverTarget(e.RowIndex, link.Kind);
+                    break;
+                }
+            }
+        }
+
+        if (Nullable.Equals(target, _hoveredLink))
+        {
+            return;
+        }
+
+        var previous = _hoveredLink;
+        _hoveredLink = target;
+        _grid.Cursor = target is null ? Cursors.Default : Cursors.Hand;
+
+        if (previous is { } previousTarget)
+        {
+            InvalidateActionsCell(previousTarget.RowIndex);
+        }
+
+        if (target is { } currentTarget)
+        {
+            InvalidateActionsCell(currentTarget.RowIndex);
+        }
+    }
+
+    private void OnGridMouseLeave(object? sender, EventArgs e)
+    {
+        _grid.Cursor = Cursors.Default;
+
+        if (_hoveredLink is { } previous)
+        {
+            _hoveredLink = null;
+            InvalidateActionsCell(previous.RowIndex);
+        }
+    }
+
+    private void OnCellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.RowIndex < 0
+            || e.ColumnIndex < 0
+            || _grid.Columns[e.ColumnIndex].Name != "Actions")
+        {
+            return;
+        }
+
+        e.Paint(e.ClipBounds, DataGridViewPaintParts.Background
+            | DataGridViewPaintParts.Border
+            | DataGridViewPaintParts.SelectionBackground);
+
+        if (e.Graphics is { } graphics && _grid.Rows[e.RowIndex].Tag is ServiceEntry entry)
+        {
+            foreach (var link in GetActionLinks(entry, e.CellBounds))
+            {
+                var isHovered = link.Enabled
+                    && _hoveredLink is { } hovered
+                    && hovered.RowIndex == e.RowIndex
+                    && hovered.Kind == link.Kind;
+
+                var color = !link.Enabled
+                    ? Color.FromArgb(178, 184, 190)
+                    : link.Kind == ActionKind.Remove
+                        ? Color.FromArgb(190, 92, 84)
+                        : Color.FromArgb(13, 126, 117);
+
+                TextRenderer.DrawText(
+                    graphics,
+                    link.Text,
+                    isHovered ? _linkHoverFont : _linkFont,
+                    link.Bounds,
+                    color,
+                    LinkTextFlags);
+            }
+        }
+
+        e.Handled = true;
+    }
+
+    private List<ActionLink> GetActionLinks(ServiceEntry entry, Rectangle bounds)
+    {
+        var primaryText = entry.State == EntryState.Shown ? "隐藏" : "显示";
+        var primarySize = MeasureLink(primaryText);
+        var removeSize = MeasureLink("移除");
+        var top = bounds.Top + (bounds.Height - primarySize.Height) / 2;
+        var left = bounds.Left + 10;
+
+        var primary = new ActionLink(
+            ActionKind.Primary,
+            primaryText,
+            new Rectangle(left, top, primarySize.Width, primarySize.Height),
+            entry.State != EntryState.Gone);
+
+        left += primarySize.Width + 14;
+        var remove = new ActionLink(
+            ActionKind.Remove,
+            "移除",
+            new Rectangle(left, top, removeSize.Width, removeSize.Height),
+            true);
+
+        return [primary, remove];
+    }
+
+    private Size MeasureLink(string text) =>
+        TextRenderer.MeasureText(
+            text,
+            _linkFont,
+            new Size(1000, 100),
+            LinkTextFlags);
+
+    private void InvalidateActionsCell(int rowIndex)
+    {
+        if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
+        {
+            _grid.InvalidateCell(_grid.Rows[rowIndex].Cells["Actions"]);
         }
     }
 
@@ -879,6 +1097,23 @@ public sealed class MainForm : Form
             "打开 .NET 10 桌面运行时下载页面",
             RuntimeDownloadUrl);
     }
+
+    private const TextFormatFlags LinkTextFlags =
+        TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+
+    private enum ActionKind
+    {
+        Primary,
+        Remove
+    }
+
+    private readonly record struct ActionLink(
+        ActionKind Kind,
+        string Text,
+        Rectangle Bounds,
+        bool Enabled);
+
+    private readonly record struct HoverTarget(int RowIndex, ActionKind Kind);
 
     private sealed class SmoothDataGridView : DataGridView
     {
