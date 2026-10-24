@@ -1085,7 +1085,7 @@ public sealed class MainForm : Form
     private void ShowAbout()
     {
         AppDialog.ShowInfo(this,
-            "SwallowIt 0.1.0\n" +
+            "SwallowIt 0.1.1\n" +
             "作者：小李同学32q\n\n" +
             "把本地服务窗口收进托盘面板、命名，并在需要时恢复。\n" +
             "不会启动、停止或重启服务，也不会结束窗口背后的进程。\n\n" +

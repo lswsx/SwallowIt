@@ -42,7 +42,7 @@ SwallowIt 做的事情很小但很实在：**把这个窗口"吞掉"（`ShowWind
 
 ## 怎么用
 
-1. **下载**：到 [Releases](../../releases) 下载 `SwallowIt-0.1.0-win-x64.zip`，解压到任意目录。
+1. **下载**：到 [Releases](../../releases) 下载 `SwallowIt-0.1.1-win-x64.zip`，解压到任意目录。
    程序本体只有 1.3 MB，需要 [.NET 10 桌面运行时](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0)（压缩包内已附带官方安装包，装过就无需再装）。
 2. **启动**：双击 `SwallowIt.exe`。首次运行如果 Windows 弹出「已保护你的电脑」，点「更多信息 → 仍要运行」（未签名程序的常规提示）。
 3. **收纳**：点「收纳窗口」→ 鼠标移到目标窗口上（会出现高亮和窗口标题+尺寸）→ 点击。窗口立刻消失，出现在列表里。
@@ -68,7 +68,7 @@ dotnet run --project src/SwallowIt/SwallowIt.csproj
 # 发布（框架依赖，产物在 dist/ 下）
 dotnet publish src/SwallowIt/SwallowIt.csproj \
   -c Release -r win-x64 --self-contained false \
-  -p:PublishSingleFile=false -o dist/SwallowIt-0.1.0-win-x64
+  -p:PublishSingleFile=true -o dist/SwallowIt-0.1.1-win-x64
 ```
 
 发布产物只有 `SwallowIt.exe`，把运行库安装包和 `使用说明.txt` 一起打包即为 Release 里的 ZIP。
